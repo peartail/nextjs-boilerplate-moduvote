@@ -8,17 +8,29 @@ export default function VotePage() {
   const { data: items, mutate } = useSWR('/api/vote', fetcher, { refreshInterval: 1000 });
   
   const [userName, setUserName] = useState('');
+  const [userId, setUserId] = useState(''); // 시스템 내부용 고유 ID
   const [activeIds, setActiveIds] = useState<number[]>([]);
 
-  // 페이지 로드 시, 브라우저에 저장된 내 이름과 투표 기록 불러오기
+  // 초기화: 사용자 ID 생성 및 로드
   useEffect(() => {
+    // 1. 사용자 ID (브라우저 식별자)
+    let storedUserId = localStorage.getItem('vote_sys_userId');
+    if (!storedUserId) {
+      storedUserId = Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+      localStorage.setItem('vote_sys_userId', storedUserId);
+    }
+    setUserId(storedUserId);
+
+    // 2. 사용자 이름 (표시용)
     const savedName = localStorage.getItem('vote_userName');
-    const savedVotes = localStorage.getItem('vote_activeIds');
     if (savedName) setUserName(savedName);
+
+    // 3. 내 투표 기록 (로컬 UI 동기화용)
+    const savedVotes = localStorage.getItem('vote_activeIds');
     if (savedVotes) setActiveIds(JSON.parse(savedVotes));
   }, []);
 
-  // 진행자가 'Clear'를 눌러 총 투표수가 0이 되면, 내 화면 불도 끔
+  // 리셋 감지
   useEffect(() => {
     if (items) {
       const totalVotes = items.reduce((sum: number, item: any) => sum + item.count, 0);
@@ -32,62 +44,58 @@ export default function VotePage() {
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const name = e.target.value;
     setUserName(name);
-    localStorage.setItem('vote_userName', name); // 이름 저장
+    localStorage.setItem('vote_userName', name);
   };
 
   const toggleVote = async (id: number) => {
     if (!userName.trim()) {
-      alert("투표를 하려면 이름을 먼저 입력해주세요!");
+      alert("이름을 입력해야 투표할 수 있습니다!");
       return;
     }
 
     let newActiveIds;
     const isAlreadyVoted = activeIds.includes(id);
 
-    // 1. 상태 업데이트 (UI 즉시 반영)
+    // UI 즉시 반영 (Optimistic UI)
     if (isAlreadyVoted) {
-      // 이미 투표했으면 -> 취소 (Unvote)
       newActiveIds = activeIds.filter((voteId) => voteId !== id);
+      // 서버 요청: 내 ID(userId)로 투표 취소
       await fetch('/api/vote', {
         method: 'POST',
-        body: JSON.stringify({ type: 'unvote', id }),
+        body: JSON.stringify({ type: 'unvote', id, userId }),
       });
     } else {
-      // 투표 안했으면 -> 투표 (Vote)
       newActiveIds = [...activeIds, id];
+      // 서버 요청: 내 ID(userId)로 투표
       await fetch('/api/vote', {
         method: 'POST',
-        body: JSON.stringify({ type: 'vote', id }),
+        body: JSON.stringify({ type: 'vote', id, userId }),
       });
     }
 
-    // 2. 상태 저장
     setActiveIds(newActiveIds);
     localStorage.setItem('vote_activeIds', JSON.stringify(newActiveIds));
-    mutate(); // 데이터 갱신
+    mutate();
   };
 
   if (!items) return <div className="h-screen flex items-center justify-center text-white">로딩중...</div>;
 
   return (
     <div className="min-h-screen bg-slate-900 p-4 flex flex-col items-center justify-center">
-      {/* 상단 이름 입력 영역 */}
       <div className="mb-8 w-full max-w-md">
         <label className="block text-slate-400 text-sm mb-2 text-center">참가자 이름</label>
         <input 
           type="text" 
           value={userName}
           onChange={handleNameChange}
-          placeholder="이름을 입력하세요"
-          className="w-full p-3 rounded-lg bg-slate-800 text-white text-center border border-slate-700 focus:border-yellow-400 outline-none transition-colors"
+          placeholder="이름 입력 필수"
+          className="w-full p-3 rounded-lg bg-slate-800 text-white text-center border border-slate-700 focus:border-yellow-400 outline-none"
         />
       </div>
 
-      {/* 투표 버튼 그리드 */}
       <div className="grid grid-cols-3 gap-3 w-full max-w-md aspect-square">
         {items.map((item: any) => {
           const isActive = activeIds.includes(item.id);
-          
           return (
             <button
               key={item.id}
@@ -103,8 +111,6 @@ export default function VotePage() {
               <span className="text-sm md:text-lg font-bold text-center break-keep leading-tight px-1">
                 {item.label}
               </span>
-              
-              {/* 선택됨 표시 아이콘 */}
               {isActive && (
                 <div className="absolute top-2 right-2 w-3 h-3 bg-red-500 rounded-full animate-bounce" />
               )}
@@ -112,9 +118,9 @@ export default function VotePage() {
           );
         })}
       </div>
-      <p className="text-slate-500 text-xs mt-8">
-        {userName ? `${userName}님, 원하는 항목을 선택/해제 하세요.` : "이름을 입력해야 투표할 수 있습니다."}
-      </p>
+      
+      {/* (개발용) 내 고유 ID 확인 */}
+      <p className="text-slate-600 text-[10px] mt-8">System ID: {userId}</p>
     </div>
   );
 }
