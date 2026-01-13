@@ -25,7 +25,18 @@ export default function AdminPage() {
     mutateItems();
   };
 
-  // 투표 종료 (스냅샷 저장 및 초기화)
+  // 1. 단순 초기화 (Clear) - 기록 저장 안함
+  const handleReset = async () => {
+    if (!confirm('경고: 현재 진행 중인 투표가 모두 사라집니다.\n정말 초기화 하시겠습니까?')) return;
+    
+    await fetch('/api/vote', {
+      method: 'POST',
+      body: JSON.stringify({ type: 'reset' }),
+    });
+    mutateItems();
+  };
+
+  // 2. 투표 종료 (Finish) - 기록 저장 후 초기화
   const handleFinishVote = async () => {
     if (!confirm('투표를 종료하고 결과를 저장하시겠습니까?\n(현재 투표는 초기화됩니다)')) return;
     
@@ -51,19 +62,30 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-6 max-w-4xl mx-auto">
-      {/* 1. 상단 컨트롤 패널 */}
+      {/* 상단 컨트롤 패널 */}
       <div className="bg-white p-6 rounded-2xl shadow-sm mb-8 border border-gray-200 relative">
-        <div className="flex justify-between items-start mb-4">
+        <div className="flex justify-between items-start mb-6">
           <div>
             <h2 className="text-xl font-bold text-gray-800">🏆 실시간 랭킹</h2>
             <p className="text-sm text-gray-500">현재 진행 중인 투표 현황입니다.</p>
           </div>
-          <button 
-            onClick={handleFinishVote}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg font-bold shadow transition-colors"
-          >
-            투표 종료 & 결과 저장
-          </button>
+          <div className="flex gap-2">
+            {/* ✅ 추가된 Clear 버튼 */}
+            <button 
+              onClick={handleReset}
+              className="bg-gray-100 hover:bg-gray-200 text-gray-600 px-4 py-2 rounded-lg font-bold transition-colors text-sm border border-gray-300"
+            >
+              초기화 (Clear)
+            </button>
+            
+            {/* 기존 투표 종료 버튼 */}
+            <button 
+              onClick={handleFinishVote}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-bold shadow transition-colors text-sm"
+            >
+              투표 종료 & 결과 저장
+            </button>
+          </div>
         </div>
 
         <div className="space-y-2 mb-2">
@@ -83,7 +105,7 @@ export default function AdminPage() {
         </div>
       </div>
 
-      {/* 2. 현재 투표 버튼 및 설정 */}
+      {/* 현재 투표 버튼 및 설정 */}
       <div className="grid grid-cols-3 gap-4 mb-12">
         {items.map((item: any) => (
           <div key={item.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col items-center">
@@ -98,24 +120,23 @@ export default function AdminPage() {
         ))}
       </div>
 
-      {/* 3. 투표 결과 리스트 (History) */}
+      {/* 투표 결과 리스트 (History) */}
       <h3 className="text-2xl font-bold text-gray-800 mb-6 border-b pb-2">📂 지난 투표 결과</h3>
       <div className="space-y-8">
         {historyList?.map((history: any) => {
-          const results = history.result_data; // JSON 데이터
+          const results = history.result_data;
           const totalVotes = results.reduce((acc: number, cur: any) => acc + cur.count, 0);
           
-          // 1,2,3등 추출
           const rankText = results.slice(0, 3).map((r: any, i: number) => 
             `${i+1}등: ${r.label}(${r.count}표)`
           ).join(' / ');
 
           return (
             <div key={history.id} className="bg-white p-6 rounded-2xl shadow-md relative group/card">
-              {/* 삭제 버튼 */}
               <button 
                 onClick={() => handleDeleteHistory(history.id)}
-                className="absolute top-4 right-4 text-gray-400 hover:text-red-500 p-1"
+                className="absolute top-4 right-4 text-gray-400 hover:text-red-500 p-1 font-bold"
+                title="기록 삭제"
               >
                 ✕
               </button>
@@ -133,47 +154,44 @@ export default function AdminPage() {
               {/* 그래프 영역 */}
               <div className="space-y-3">
                 {results.map((r: any, idx: number) => {
-                  if (r.count === 0) return null; // 0표는 그래프 숨김
+                  if (r.count === 0) return null;
                   const percent = totalVotes > 0 ? (r.count / totalVotes) * 100 : 0;
                   
                   return (
                     <div key={idx} className="flex items-center text-sm group/bar relative">
-                      {/* 라벨 */}
-                      <div className="w-24 truncate text-right mr-3 font-medium text-gray-600">
+                      {/* 라벨 (좌측) */}
+                      <div className="w-24 truncate text-right mr-3 font-medium text-gray-600 shrink-0">
                         {r.label}
                       </div>
                       
-                      {/* 막대 그래프 배경 */}
+                      {/* 막대 그래프 컨테이너 (중앙) */}
                       <div className="flex-1 h-8 bg-gray-100 rounded-r-lg relative flex items-center">
-                        {/* 실제 막대 */}
                         <div 
-                          className={clsx("h-full rounded-r-lg transition-all duration-500 flex items-center px-2 text-white font-bold text-xs", 
+                          className={clsx("h-full rounded-r-lg transition-all duration-500 flex items-center px-2 text-white font-bold text-xs relative", 
                             idx === 0 ? "bg-red-500" : 
                             idx === 1 ? "bg-orange-400" : "bg-blue-400"
                           )}
                           style={{ width: `${percent}%` }}
                         >
-                        </div>
-                        
-                        {/* 막대 우측 텍스트 (몇 표) */}
-                        <span className="ml-2 text-gray-600 font-bold text-xs absolute left-full pl-2 w-10">
-                          {r.count}회
-                        </span>
-
-                        {/* 🔥 마우스 오버 팝업 (투표자 명단) */}
-                        <div className="hidden group-hover/bar:block absolute bottom-full left-10 mb-2 z-10 w-48 bg-gray-800 text-white text-xs rounded-lg p-3 shadow-xl pointer-events-none">
-                          <div className="font-bold border-b border-gray-600 pb-1 mb-1 text-yellow-400">
-                            {r.label} 투표자 ({r.count}명)
+                          {/* ✅ 툴팁 수정: 막대 위에 마우스 올리면 텍스트로 명단 표시 */}
+                          <div className="hidden group-hover/bar:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-20 w-max max-w-[250px] bg-gray-800 text-white text-xs rounded-lg p-3 shadow-xl pointer-events-none">
+                            <div className="font-bold border-b border-gray-600 pb-1 mb-1 text-yellow-400">
+                              {r.label} 투표자 ({r.count}명)
+                            </div>
+                            <div className="leading-relaxed break-words whitespace-normal">
+                              {/* 쉼표로 구분된 텍스트 */}
+                              {r.voters.join(', ')}
+                            </div>
+                            {/* 말풍선 꼬리 */}
+                            <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-gray-800"></div>
                           </div>
-                          <div className="flex flex-wrap gap-1">
-                            {r.voters.map((name: string, i: number) => (
-                              <span key={i} className="bg-gray-700 px-1 rounded">{name}</span>
-                            ))}
-                          </div>
-                          {/* 말풍선 꼬리 */}
-                          <div className="absolute top-full left-4 -mt-1 border-4 border-transparent border-t-gray-800"></div>
                         </div>
                       </div>
+
+                      {/* ✅ 텍스트 수정: 막대 그래프 바깥쪽(우측)에 배치하여 짤림 방지 */}
+                      <span className="ml-2 text-gray-600 font-bold text-xs w-12 shrink-0">
+                        {r.count}회
+                      </span>
                     </div>
                   );
                 })}
