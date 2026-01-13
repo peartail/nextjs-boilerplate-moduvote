@@ -7,21 +7,22 @@ const fetcher = (url: string) => fetch(url).then((res) => res.json());
 export default function VotePage() {
   const { data: items, mutate } = useSWR('/api/vote', fetcher, { 
     refreshInterval: 1000,
-    revalidateOnFocus: false // 탭 전환 시 불필요한 깜빡임 방지
+    revalidateOnFocus: false 
   });
   
   const [userName, setUserName] = useState('');
   const [userId, setUserId] = useState('');
   const [activeIds, setActiveIds] = useState<number[]>([]);
 
-  // 디바운싱을 위한 타이머 저장소
+  // 디바운싱 타이머 저장소
   const debounceTimers = useRef<{ [key: number]: NodeJS.Timeout }>({});
   
-  // 클로저 문제 해결을 위해 최신 상태를 Ref로 추적
+  // 클로저 문제 해결을 위한 최신 상태 추적 Ref
   const activeIdsRef = useRef<number[]>([]);
 
-  // 초기화
+  // 초기화 (ID 생성 및 로컬스토리지 로드)
   useEffect(() => {
+    // 1. 유저 고유 ID (브라우저 식별용)
     let storedUserId = localStorage.getItem('vote_sys_userId');
     if (!storedUserId) {
       storedUserId = Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
@@ -29,18 +30,20 @@ export default function VotePage() {
     }
     setUserId(storedUserId);
 
+    // 2. 이름 불러오기
     const savedName = localStorage.getItem('vote_userName');
     if (savedName) setUserName(savedName);
 
+    // 3. 내 투표 기록 불러오기
     const savedVotes = localStorage.getItem('vote_activeIds');
     if (savedVotes) {
       const parsed = JSON.parse(savedVotes);
       setActiveIds(parsed);
-      activeIdsRef.current = parsed; // Ref 동기화
+      activeIdsRef.current = parsed; 
     }
   }, []);
 
-  // 리셋 감지
+  // 리셋 감지 (서버 투표수가 0이 되면 내 화면도 초기화)
   useEffect(() => {
     if (items) {
       const totalVotes = items.reduce((sum: number, item: any) => sum + item.count, 0);
@@ -58,19 +61,19 @@ export default function VotePage() {
     localStorage.setItem('vote_userName', name);
   };
 
-  // ✅ 핵심 로직 수정: 화면 즉시 반영 + 서버 요청 지연 전송
+  // ✅ 핵심 로직: 디바운싱 + 이름(userName) 전송
   const toggleVote = (id: number) => {
     if (!userName.trim()) {
       alert("이름을 입력해야 투표할 수 있습니다!");
       return;
     }
 
-    // 1. 기존 타이머가 있다면 취소 (이전 클릭 무시)
+    // 1. 기존 타이머 취소 (빠른 클릭 시 이전 요청 무시)
     if (debounceTimers.current[id]) {
       clearTimeout(debounceTimers.current[id]);
     }
 
-    // 2. 현재 상태 기준으로 UI 즉시 변경 (낙관적 업데이트)
+    // 2. 화면 즉시 반영 (낙관적 업데이트)
     let newActiveIds;
     if (activeIds.includes(id)) {
       newActiveIds = activeIds.filter((voteId) => voteId !== id);
@@ -78,27 +81,26 @@ export default function VotePage() {
       newActiveIds = [...activeIds, id];
     }
 
-    // 상태와 로컬스토리지, Ref 즉시 업데이트
     setActiveIds(newActiveIds);
     activeIdsRef.current = newActiveIds; 
     localStorage.setItem('vote_activeIds', JSON.stringify(newActiveIds));
 
-    // 3. 0.5초 뒤에 서버로 "최종 상태" 전송 (디바운싱)
-   debounceTimers.current[id] = setTimeout(async () => {
+    // 3. 0.5초 뒤 서버 전송 (이때 userName을 꼭 포함해야 함!)
+    debounceTimers.current[id] = setTimeout(async () => {
       const isFinallyActive = activeIdsRef.current.includes(id);
       const type = isFinallyActive ? 'vote' : 'unvote';
       
       try {
         await fetch('/api/vote', {
           method: 'POST',
-          // ✅ 수정됨: userName을 같이 보냄
+          // 👇 여기가 핵심입니다. userName을 같이 보내야 DB에 기록됩니다.
           body: JSON.stringify({ type, id, userId, userName }),
         });
-        mutate();
+        mutate(); 
       } catch (error) {
         console.error("투표 전송 실패", error);
       }
-    }, 500);// 500ms 딜레이 (취향에 따라 300~500 조절 가능)
+    }, 500); 
   };
 
   if (!items) return <div className="h-screen flex items-center justify-center text-white">로딩중...</div>;
@@ -112,7 +114,7 @@ export default function VotePage() {
           value={userName}
           onChange={handleNameChange}
           placeholder="이름 입력 필수"
-          className="w-full p-3 rounded-lg bg-slate-800 text-white text-center border border-slate-700 focus:border-yellow-400 outline-none"
+          className="w-full p-3 rounded-lg bg-slate-800 text-white text-center border border-slate-700 focus:border-yellow-400 outline-none transition-colors"
         />
       </div>
 
@@ -141,6 +143,11 @@ export default function VotePage() {
           );
         })}
       </div>
+      
+      <p className="text-slate-600 text-[10px] mt-8 text-center">
+        {userName ? `${userName}님 접속중` : '이름을 입력해주세요'} 
+        <br/> ID: {userId.slice(0, 8)}...
+      </p>
     </div>
   );
 }
