@@ -84,24 +84,21 @@ export default function VotePage() {
     localStorage.setItem('vote_activeIds', JSON.stringify(newActiveIds));
 
     // 3. 0.5초 뒤에 서버로 "최종 상태" 전송 (디바운싱)
-    debounceTimers.current[id] = setTimeout(async () => {
-      // 0.5초 뒤의 시점에서, 이 버튼이 켜져있는지 꺼져있는지 확인
-      // (State 대신 Ref를 써야 0.5초 뒤의 최신 값을 정확히 읽어옴)
+   debounceTimers.current[id] = setTimeout(async () => {
       const isFinallyActive = activeIdsRef.current.includes(id);
-
-      // 최종 상태에 따라 요청 전송
       const type = isFinallyActive ? 'vote' : 'unvote';
       
       try {
         await fetch('/api/vote', {
           method: 'POST',
-          body: JSON.stringify({ type, id, userId }),
+          // ✅ 수정됨: userName을 같이 보냄
+          body: JSON.stringify({ type, id, userId, userName }),
         });
-        mutate(); // 데이터 갱신
+        mutate();
       } catch (error) {
         console.error("투표 전송 실패", error);
       }
-    }, 500); // 500ms 딜레이 (취향에 따라 300~500 조절 가능)
+    }, 500);// 500ms 딜레이 (취향에 따라 300~500 조절 가능)
   };
 
   if (!items) return <div className="h-screen flex items-center justify-center text-white">로딩중...</div>;
