@@ -6,8 +6,12 @@ import { clsx } from 'clsx';
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
 export default function AdminPage() {
-  // 현재 투표 현황
-  const { data: items, mutate: mutateItems } = useSWR('/api/vote', fetcher, { refreshInterval: 1000 });
+  // 현재 투표 현황 (items와 mode를 함께 받아옴)
+  const { data, mutate: mutateItems } = useSWR('/api/vote', fetcher, { refreshInterval: 1000 });
+  
+  const items = data?.items; // 투표 항목 리스트
+  const mode = data?.mode || 'single'; // 현재 모드 (기본값 single)
+
   // 투표 기록(History)
   const { data: historyList, mutate: mutateHistory } = useSWR('/api/history', fetcher);
 
@@ -25,7 +29,7 @@ export default function AdminPage() {
     mutateItems();
   };
 
-  // 1. 단순 초기화 (Clear) - 기록 저장 안함
+  // 1. 단순 초기화 (Clear)
   const handleReset = async () => {
     if (!confirm('경고: 현재 진행 중인 투표가 모두 사라집니다.\n정말 초기화 하시겠습니까?')) return;
     
@@ -36,15 +40,29 @@ export default function AdminPage() {
     mutateItems();
   };
 
-  // 2. 투표 종료 (Finish) - 기록 저장 후 초기화
+  // ✅ 모드 변경 토글 (단수 <-> 복수)
+  const handleToggleMode = async () => {
+    const newMode = mode === 'single' ? 'multiple' : 'single';
+    const modeName = newMode === 'single' ? '단수투표' : '복수투표';
+    
+    if (!confirm(`투표 방식을 '${modeName}'로 변경하시겠습니까?\n(변경 시 현재 투표는 초기화됩니다)`)) return;
+
+    await fetch('/api/vote', {
+      method: 'POST',
+      body: JSON.stringify({ type: 'setMode', mode: newMode }),
+    });
+    mutateItems(); // 데이터 갱신
+  };
+
+  // 2. 투표 종료 (Finish)
   const handleFinishVote = async () => {
     if (!confirm('투표를 종료하고 결과를 저장하시겠습니까?\n(현재 투표는 초기화됩니다)')) return;
     
     const res = await fetch('/api/history', { method: 'POST' });
     if (res.ok) {
       alert("투표가 종료되고 결과가 저장되었습니다.");
-      mutateItems();   // 현재 투표 0으로 초기화
-      mutateHistory(); // 기록 목록 갱신
+      mutateItems();   
+      mutateHistory(); 
     }
   };
 
@@ -67,18 +85,36 @@ export default function AdminPage() {
         <div className="flex justify-between items-start mb-6">
           <div>
             <h2 className="text-xl font-bold text-gray-800">🏆 실시간 랭킹</h2>
-            <p className="text-sm text-gray-500">현재 진행 중인 투표 현황입니다.</p>
+            <div className="flex items-center gap-2 text-sm text-gray-500">
+              <p>현재 진행 중인 투표 현황입니다.</p>
+              <span className="bg-gray-100 px-2 py-0.5 rounded text-xs border border-gray-300">
+                현재: {mode === 'single' ? '단수투표' : '복수투표'}
+              </span>
+            </div>
           </div>
           <div className="flex gap-2">
-            {/* ✅ 추가된 Clear 버튼 */}
+            {/* 초기화 버튼 */}
             <button 
               onClick={handleReset}
               className="bg-gray-100 hover:bg-gray-200 text-gray-600 px-4 py-2 rounded-lg font-bold transition-colors text-sm border border-gray-300"
             >
               초기화 (Clear)
             </button>
+
+            {/* ✅ 투표 모드 토글 버튼 */}
+            <button 
+              onClick={handleToggleMode}
+              className={clsx(
+                "px-4 py-2 rounded-lg font-bold transition-colors text-sm border shadow-sm",
+                mode === 'single' 
+                  ? "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100" 
+                  : "bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100"
+              )}
+            >
+              {mode === 'single' ? '단수투표' : '복수투표'}
+            </button>
             
-            {/* 기존 투표 종료 버튼 */}
+            {/* 투표 종료 버튼 */}
             <button 
               onClick={handleFinishVote}
               className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-bold shadow transition-colors text-sm"
@@ -159,12 +195,10 @@ export default function AdminPage() {
                   
                   return (
                     <div key={idx} className="flex items-center text-sm group/bar relative">
-                      {/* 라벨 (좌측) */}
                       <div className="w-24 truncate text-right mr-3 font-medium text-gray-600 shrink-0">
                         {r.label}
                       </div>
                       
-                      {/* 막대 그래프 컨테이너 (중앙) */}
                       <div className="flex-1 h-8 bg-gray-100 rounded-r-lg relative flex items-center">
                         <div 
                           className={clsx("h-full rounded-r-lg transition-all duration-500 flex items-center px-2 text-white font-bold text-xs relative", 
@@ -173,22 +207,18 @@ export default function AdminPage() {
                           )}
                           style={{ width: `${percent}%` }}
                         >
-                          {/* ✅ 툴팁 수정: 막대 위에 마우스 올리면 텍스트로 명단 표시 */}
                           <div className="hidden group-hover/bar:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-20 w-max max-w-[250px] bg-gray-800 text-white text-xs rounded-lg p-3 shadow-xl pointer-events-none">
                             <div className="font-bold border-b border-gray-600 pb-1 mb-1 text-yellow-400">
                               {r.label} 투표자 ({r.count}명)
                             </div>
                             <div className="leading-relaxed break-words whitespace-normal">
-                              {/* 쉼표로 구분된 텍스트 */}
                               {r.voters.join(', ')}
                             </div>
-                            {/* 말풍선 꼬리 */}
                             <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-gray-800"></div>
                           </div>
                         </div>
                       </div>
 
-                      {/* ✅ 텍스트 수정: 막대 그래프 바깥쪽(우측)에 배치하여 짤림 방지 */}
                       <span className="ml-2 text-gray-600 font-bold text-xs w-12 shrink-0">
                         {r.count}회
                       </span>

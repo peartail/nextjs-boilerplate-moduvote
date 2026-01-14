@@ -5,7 +5,10 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    // 항목별 투표수 조회
+    // 1. 설정 테이블이 없으면 생성 (안전장치)
+    await sql`CREATE TABLE IF NOT EXISTS vote_settings (key TEXT PRIMARY KEY, value TEXT)`;
+
+    // 2. 항목별 투표수 조회
     const result = await sql`
       SELECT 
         i.id, 
@@ -16,7 +19,13 @@ export async function GET() {
       GROUP BY i.id, i.label 
       ORDER BY i.id ASC
     `;
-    return NextResponse.json(result.rows);
+
+    // 3. 현재 투표 모드 조회 (기본값: single)
+    const modeResult = await sql`SELECT value FROM vote_settings WHERE key = 'vote_mode'`;
+    const mode = modeResult.rows[0]?.value || 'single';
+
+    // 배열이 아닌 객체 형태로 반환 ({ items, mode })
+    return NextResponse.json({ items: result.rows, mode });
   } catch (error) {
     return NextResponse.json({ error }, { status: 500 });
   }
@@ -24,24 +33,37 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const body = await request.json();
-  const { type, id, label, userId, userName } = body; // userName 추가됨
+  const { type, id, label, userId, userName, mode } = body; 
 
   try {
     if (type === 'vote') {
-      // 이름(userName)도 같이 저장
+      // 투표 (기존 로직)
       await sql`
         INSERT INTO votes (user_id, item_id, user_name) 
         VALUES (${userId}, ${id}, ${userName}) 
         ON CONFLICT (user_id, item_id) 
-        DO UPDATE SET user_name = ${userName} -- 혹시 이름 바뀌었으면 갱신
+        DO UPDATE SET user_name = ${userName}
       `;
     } else if (type === 'unvote') {
+      // 투표 취소
       await sql`DELETE FROM votes WHERE user_id = ${userId} AND item_id = ${id}`;
     } else if (type === 'updateLabel') {
+      // 라벨 수정
       await sql`UPDATE vote_items SET label = ${label} WHERE id = ${id}`;
     } else if (type === 'reset') {
+      // 초기화
+      await sql`DELETE FROM votes`;
+    } else if (type === 'setMode') {
+      // ✅ 모드 변경 및 초기화
+      // 1. 모드 설정 저장
+      await sql`
+        INSERT INTO vote_settings (key, value) VALUES ('vote_mode', ${mode})
+        ON CONFLICT (key) DO UPDATE SET value = ${mode}
+      `;
+      // 2. 투표 데이터 초기화 (Clear)
       await sql`DELETE FROM votes`;
     }
+
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error(error);

@@ -5,11 +5,15 @@ import { useState, useEffect, useRef } from 'react';
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
 export default function VotePage() {
-  const { data: items, mutate } = useSWR('/api/vote', fetcher, { 
+  // 데이터 구조 분해 ({ items, mode })
+  const { data, mutate } = useSWR('/api/vote', fetcher, { 
     refreshInterval: 1000,
     revalidateOnFocus: false 
   });
   
+  const items = data?.items;
+  const mode = data?.mode || 'single'; // 기본값 single
+
   const [userName, setUserName] = useState('');
   const [userId, setUserId] = useState('');
   const [activeIds, setActiveIds] = useState<number[]>([]);
@@ -22,7 +26,7 @@ export default function VotePage() {
 
   // 초기화 (ID 생성 및 로컬스토리지 로드)
   useEffect(() => {
-    // 1. 유저 고유 ID (브라우저 식별용)
+    // 1. 유저 고유 ID
     let storedUserId = localStorage.getItem('vote_sys_userId');
     if (!storedUserId) {
       storedUserId = Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
@@ -61,7 +65,7 @@ export default function VotePage() {
     localStorage.setItem('vote_userName', name);
   };
 
-  // ✅ 핵심 로직: 디바운싱 + 이름(userName) 전송
+  // ✅ 핵심 로직: 디바운싱 + 이름 전송 + (단수/복수 처리)
   const toggleVote = (id: number) => {
     if (!userName.trim()) {
       alert("이름을 입력해야 투표할 수 있습니다!");
@@ -73,34 +77,76 @@ export default function VotePage() {
       clearTimeout(debounceTimers.current[id]);
     }
 
-    // 2. 화면 즉시 반영 (낙관적 업데이트)
-    let newActiveIds;
-    if (activeIds.includes(id)) {
-      newActiveIds = activeIds.filter((voteId) => voteId !== id);
+    // 2. 화면 즉시 반영 (낙관적 업데이트) & 모드별 로직
+    let newActiveIds: number[];
+
+    if (mode === 'single') {
+      // [단수투표]
+      if (activeIds.includes(id)) {
+        // 이미 선택된 것을 누르면 해제 (0개 선택 가능)
+        newActiveIds = [];
+      } else {
+        // 새로운 것을 누르면 그것만 선택 (기존 것 해제)
+        newActiveIds = [id];
+      }
     } else {
-      newActiveIds = [...activeIds, id];
+      // [복수투표] (기존 로직)
+      if (activeIds.includes(id)) {
+        newActiveIds = activeIds.filter((voteId) => voteId !== id);
+      } else {
+        newActiveIds = [...activeIds, id];
+      }
     }
 
     setActiveIds(newActiveIds);
     activeIdsRef.current = newActiveIds; 
     localStorage.setItem('vote_activeIds', JSON.stringify(newActiveIds));
 
-    // 3. 0.5초 뒤 서버 전송 (이때 userName을 꼭 포함해야 함!)
-    debounceTimers.current[id] = setTimeout(async () => {
-      const isFinallyActive = activeIdsRef.current.includes(id);
-      const type = isFinallyActive ? 'vote' : 'unvote';
-      
-      try {
-        await fetch('/api/vote', {
-          method: 'POST',
-          // 👇 여기가 핵심입니다. userName을 같이 보내야 DB에 기록됩니다.
-          body: JSON.stringify({ type, id, userId, userName }),
-        });
-        mutate(); 
-      } catch (error) {
-        console.error("투표 전송 실패", error);
-      }
-    }, 500); 
+    // 3. 0.5초 뒤 서버 전송
+    // 단수투표 시 교체되는 경우:
+    // 기존 선택된 ID는 newActiveIds에 없으므로 아래 로직에서 자동으로 'unvote' 전송됨
+    // 새로 선택된 ID는 newActiveIds에 있으므로 'vote' 전송됨
+    
+    // 현재 조작한 ID에 대해서만 타이머 설정하면 부족할 수 있음 (단수투표 교체 시)
+    // 따라서 단수투표 모드에서는 '모든' 아이템에 대해 상태 동기화를 확인하거나,
+    // 간단히 여기서 클릭한 id뿐만 아니라, 기존에 선택되었던 id도 트리거해줘야 함.
+    // 하지만 기존 로직(debounceTimers)은 id별로 동작함.
+    
+    // 개선된 로직: 변경이 발생한 모든 ID에 대해 서버 요청을 보낼 필요가 있음.
+    // 단수투표에서 A -> B로 바꿀 때:
+    // A: 선택됨 -> 해제됨 (서버에 unvote 보내야 함)
+    // B: 해제됨 -> 선택됨 (서버에 vote 보내야 함)
+    
+    // 현재 함수는 `id`(클릭한 항목)만 인자로 받음.
+    // 단수투표의 경우, 이전에 선택되었던 항목(prevId)도 찾아서 unvote 처리를 확실히 해줘야 함.
+    // 다만, `toggleVote`가 실행되는 시점에서 `activeIds`는 아직 갱신 전 상태(이전 상태)를 가지고 있음.
+    
+    const prevActiveIds = activeIds; // 변경 전 상태
+
+    // 영향 받는 모든 ID 수집 (클릭한 ID + 이전에 선택되어 있었던 ID들)
+    const affectedIds = new Set([id, ...prevActiveIds]);
+
+    affectedIds.forEach((targetId) => {
+        // 각 영향받는 ID에 대해 디바운스 타이머 설정
+        if (debounceTimers.current[targetId]) {
+            clearTimeout(debounceTimers.current[targetId]);
+        }
+
+        debounceTimers.current[targetId] = setTimeout(async () => {
+            const isFinallyActive = activeIdsRef.current.includes(targetId);
+            const type = isFinallyActive ? 'vote' : 'unvote';
+            
+            try {
+                await fetch('/api/vote', {
+                    method: 'POST',
+                    body: JSON.stringify({ type, id: targetId, userId, userName }),
+                });
+                mutate(); 
+            } catch (error) {
+                console.error("투표 전송 실패", error);
+            }
+        }, 500);
+    });
   };
 
   if (!items) return <div className="h-screen flex items-center justify-center text-white">로딩중...</div>;
@@ -116,6 +162,9 @@ export default function VotePage() {
           placeholder="이름 입력 필수"
           className="w-full p-3 rounded-lg bg-slate-800 text-white text-center border border-slate-700 focus:border-yellow-400 outline-none transition-colors"
         />
+        <p className="text-slate-500 text-xs text-center mt-2">
+            현재 모드: <span className="text-yellow-400 font-bold">{mode === 'single' ? '단수투표 (1개만 선택)' : '복수투표 (여러개 선택)'}</span>
+        </p>
       </div>
 
       <div className="grid grid-cols-3 gap-3 w-full max-w-md aspect-square">
